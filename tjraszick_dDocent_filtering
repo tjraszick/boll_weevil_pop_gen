@@ -1,0 +1,71 @@
+module purge
+module load vcflib/1.0.0-rc1-GCCcore-6.3.0
+module load Mawk/1.3.4-intel-2015B-20150503
+module load VCFtools/0.1.16-foss-2018b-Perl-5.28.0
+
+## filter sites not genotyped in 100% of individuals and phred quality score less than 30
+vcftools --vcf Final.recode.vcf --max-missing 1.0 --mac 3 --minQ 30 --recode --recode-INFO-all --out BW_dDocent_Dovetail_phred30
+
+## filter genotypes without 3 minimum reads 
+vcftools --vcf BW_dDocent_Dovetail_phred30.recode.vcf --minDP 3 --recode --recode-INFO-all --out BW_dDocent_Dovetail_minReads3_phred30
+
+## remove low quality individuals
+vcftools --vcf BW_dDocent_Dovetail_minReads3_phred30.recode.vcf --missing-indv
+
+cat out.imiss
+
+mawk '!/IN/' out.imiss | cut -f5 > totalmissing_phred30
+gnuplot << \EOF 
+set terminal dumb size 120, 30
+set autoscale 
+unset label
+set title "Histogram of % missing data per individual"
+set ylabel "Number of Occurrences"
+set xlabel "% of missing data"
+#set yr [0:100000]
+binwidth=0.01
+bin(x,width)=width*floor(x/width) + binwidth/2.0
+plot 'totalmissing_phred30' using (bin($1,binwidth)):(1.0) smooth freq with boxes
+pause -1
+EOF
+
+mawk '$5 > 0.5' out.imiss | cut -f1 > lowDP_0.5_phred30.indv
+
+vcftools --vcf BW_dDocent_Dovetail_minReads3_phred30.recode.vcf --remove lowDP_0.5_phred30.indv --recode --recode-INFO-all --out BW_dDocent_Dovetail_lowDP_0.5_phred30
+
+## filter by missing data, minor allele frequency, and minimum mean depth
+
+vcftools --vcf BW_dDocent_Dovetail_lowDP_0.5_phred30.recode.vcf --max-missing 1.0 --maf 0.05 --recode --recode-INFO-all --out BW_dDocent_Dovetail_lowDP_0.5_phred30_filter1 --min-meanDP 20
+
+## run the pop. missing filter
+curl -L -O https://github.com/jpuritz/dDocent/raw/master/scripts/pop_missing_filter.sh
+chmod +x pop_missing_filter.sh
+./pop_missing_filter.sh
+
+./pop_missing_filter.sh BW_dDocent_Dovetail_lowDP_0.5_phred30_filter1.recode.vcf BW_dDocent_Dovetail_popmap.txt 1.0 15 BW_dDocent_Dovetail_lowDP_0.5_phred30_filter2
+
+## run the next series of filters
+curl -L -O https://github.com/jpuritz/dDocent/raw/master/scripts/dDocent_filters
+chmod +x dDocent_filters
+./dDocent_filters
+
+./dDocent_filters BW_dDocent_Dovetail_lowDP_0.5_phred30_filter2.recode.vcf BW_dDocent_Dovetail_lowDP_0.5_phred30_filter3
+
+mawk '!/#/' BW_dDocent_Dovetail_lowDP_0.5_phred30_filter3.FIL.recode.vcf | wc -l
+
+## filter HWE. you need to run each filter separately, because the default is to return a file named new.hwe.recode.vcf
+curl -L -O https://github.com/jpuritz/dDocent/raw/master/scripts/filter_hwe_by_pop.pl
+chmod +x filter_hwe_by_pop.pl
+./filter_hwe_by_pop.pl
+
+./filter_hwe_by_pop.pl -v BW_dDocent_Dovetail_lowDP_0.5_phred30_filter3.FIL.recode.vcf -p popmap
+
+mv new.hwe.recode.vcf BW_dDocent_Dovetail_lowDP_0.5_phred30_HWF.recode.vcf
+
+mawk '!/#/' BW_dDocent_Dovetail_lowDP_0.5_phred30_HWF.recode.vcf | wc -l
+
+## remove indels and non-biallelic loci
+
+vcftools --vcf BW_dDocent_Dovetail_lowDP_0.5_phred30_HWF.recode.vcf --min-alleles 2 --max-alleles 2 --remove-indels --recode --recode-INFO-all --out BW_dDocent_Dovetail_lowDP_0.5_phred30_biallelic
+
+mawk '!/#/' BW_dDocent_Dovetail_lowDP_0.5_phred30_biallelic.recode.vcf | wc -l
