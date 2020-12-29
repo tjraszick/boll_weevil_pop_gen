@@ -5,7 +5,6 @@ library(multcomp)
 library(multcompView)
 library(ggpubr)
 
-setwd("~/Bioinformatics/BWpopgen/2020_revisions")
 relatedness <- read.table("withinPopulationRelatedness", sep="\t", header = TRUE)
 relatedness
 
